@@ -82,7 +82,7 @@ class AiService:
             ],
             "stream": False,
             "keep_alive": "10m",
-            "think": false,
+            "think": False,
             "options": {
                 "presence_penalty": 1.5,
                 "temperature": 1,
