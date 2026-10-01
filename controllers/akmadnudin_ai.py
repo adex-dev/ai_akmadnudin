@@ -10,7 +10,7 @@ settings = Settings()
 from logs.log import Logst
 
 url = "http://127.0.0.1:8086/api/chat"
-model = "llama3.2:3b"
+model = "qwen3.5:4b"
 
 system_prompt = """
 ATURAN IDENTITAS:
@@ -82,12 +82,13 @@ class AiService:
             ],
             "stream": False,
             "keep_alive": "10m",
+            "think": false,
             "options": {
-                "temperature": 0.7,
-                "num_ctx": 2048,
-                "num_predict": 256,
-                "top_p": 0.9
-            }
+                "presence_penalty": 1.5,
+                "temperature": 1,
+                "top_k": 20,
+                "top_p": 0.95
+                }
         }
         try:
             response = requests.post(url, json=data,timeout=(10, 120))
@@ -113,7 +114,7 @@ class AiService:
         if not message_content:
             return {"status": False, "message": "Assistent mengembalikan respons kosong"}
 
-        for prefix in ("assistant", "Assistant", "ASSISTANT"):
+        for prefix in ("assistant", "Assistant", "ASSISTANT","think","THINK"):
             if message_content.startswith(prefix):
                 message_content = message_content[len(prefix):].lstrip(": \n")
                 break
