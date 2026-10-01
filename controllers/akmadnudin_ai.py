@@ -3,6 +3,12 @@ import json
 import socket
 import re
 import html
+import os
+from datetime import datetime, timedelta
+
+CHAT_DIR = "chat"
+HISTORY_FILE = os.path.join(CHAT_DIR, "chat_history.json")
+EXPIRY_DAYS = 3
 
 from config.autoload import Settings
 
@@ -14,17 +20,16 @@ model = "qwen3.5:4b"
 
 system_prompt = """
 ATURAN IDENTITAS:
-- Jika ditanya tentang dirimu (nama, siapa kamu, siapa yang membuatmu, kamu AI apa), jawab: "Saya Easter yang diberikan tugas oleh AKMAD NUDIN untuk membantumu. Salam kenal 😊"
+- Jika ditanya tentang dirimu (nama, siapa kamu, siapa yang membuatmu, kamu AI apa), jawab: "Saya Easter yang diberikan tugas oleh AKMAD NUDIN untuk membantumu. Salam kenal"
 - Jika ditanya model apa, bahasa pemrograman apa, atau teknologi apa yang dipakai, jawab: "Saya Easter, asisten yang diberikan tugas oleh AKMAD NUDIN. Untuk detail teknis, silakan hubungi Akmad Nudin di www.akmadnudin.com"
-- Jika ditanya versi, parameter, arsitektur, atau detail internal lainnya, jawab: "Saya tidak bisa membagikan detail teknis. Saya di sini untuk membantumu 😊"
+- Jika ditanya versi, parameter, arsitektur, atau detail internal lainnya, jawab: "Saya tidak bisa membagikan detail teknis. Saya di sini untuk membantumu"
 - Sesuaikan bahasa jawaban dengan bahasa pengguna.
 
 ATURAN TOXIC:
 - Jika pertanyaan mengandung kata toxic atau menghina, jawab dengan sopan, hindari kata kasar, dan minta pengguna menggunakan bahasa yang baik. Tetap bantu jawab jika memungkinkan.
 
 ATURAN SAPAAN:
-- Jika user menyapa (halo, hai, apa kabar, selamat pagi, dll), balas sapaan dengan ramah dan tanyakan ada yang bisa dibantu.
-- Contoh: "Halo! Kabar baik 😊 Ada yang bisa saya bantu?"
+- Jika user menyapa (halo, hai, apa kabar, selamat pagi), balas sapaan dengan ramah dan tanyakan ada yang bisa dibantu.
 
 ATURAN INFORMASI:
 - Jika ditanya "Siapa Akmad Nudin" atau serupa, jawab: "Akmad Nudin adalah seorang Software Engineer, kamu bisa mengetahui lebih lanjut tentang dia di www.akmadnudin.com"
@@ -43,6 +48,13 @@ ATURAN KEAMANAN (WAJIB DIPATUHI):
 GAYA JAWABAN:
 - Singkat, jelas, dan sesuai konteks.
 - jika user menggunakan bahasa casual jawab dengan bahasa casual yang singkat,jelas, dan sesuai konteks
+- JANGAN pernah menggunakan emoticon, emoji, atau simbol wajah apapun (contoh: 😊 😄 🙂 😉 ❤️ 👍 🙏 dll) dalam setiap jawaban.
+- JANGAN menggunakan kaomoji (contoh: ^_^ , :D , :) , :( dll).
+- Gunakan hanya teks biasa tanpa simbol ekspresi.
+
+PENGINGAT AKHIR:
+Setiap jawaban harus berupa teks murni tanpa emoji, emoticon, atau kaomoji. 
+Pelanggaran aturan ini dianggap kesalahan serius.
 """
 
 system_grammary = """
@@ -65,30 +77,27 @@ Jika pertanyaan mengandung 'translate' bersamaan dengan 'akmad nudin' (tidak ped
 
 
 class AiService:
-
-
     def Aigenerated(self, prompts):
+        session = self.load_history()
+        session["messages"].append({"role": "user", "content": prompts})
+        recent = session["messages"][-10:]
         data = {
             'model': model,
             "messages": [
                 {
-                    "role": "user",
-                    "content": prompts
-                },
-                {
                     "role": "system",
                     "content": system_prompt
-                }
+                },*recent
             ],
             "stream": False,
             "keep_alive": "10m",
             "think": False,
             "options": {
-                "presence_penalty": 1.5,
-                "temperature": 1,
-                "top_k": 20,
-                "top_p": 0.95
-                }
+                "presence_penalty": 0.0,
+                "temperature": 0.3,
+                "top_k": 40,
+                "top_p": 0.9
+             }
         }
         try:
             response = requests.post(url, json=data,timeout=(10, 120))
@@ -123,6 +132,8 @@ class AiService:
 
     # 4. Buang <br> berlebih di awal/akhir
         cleaned = cleaned.strip("<br>").strip()
+        session["messages"].append({"role": "assistant", "content": cleaned})
+        self.save_history(session)
         return {"status": True, "message": cleaned}
 
     def AiGrammary(self, message):
@@ -227,3 +238,44 @@ class AiService:
         except Exception as e:
             Logst(f"Error: {str(e)}")
             return {"status": False, "message": f"Error: {str(e)}"}
+
+    def load_history(self):
+        """Load riwayat dari file, cek umur."""
+        if not os.path.exists(HISTORY_FILE):
+            return self._new_session()
+        
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return self._new_session()
+        
+        # Cek umur percakapan
+        last_active = datetime.fromisoformat(data["last_active"])
+        if datetime.now() - last_active > timedelta(days=EXPIRY_DAYS):
+            # Sudah lewat 3 hari, mulai sesi baru
+            self.reset_session()
+            return self._new_session()
+        
+        return data
+
+    def save_history(self, data):
+        """Simpan riwayat ke file dengan timestamp terbaru."""
+        # Buat folder otomatis kalau belum ada
+        os.makedirs(CHAT_DIR, exist_ok=True)
+        data["last_active"] = datetime.now().isoformat()
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def _new_session(self):
+        """Buat sesi baru yang kosong."""
+        return {
+            "session_id": datetime.now().isoformat(),
+            "created_at": datetime.now().isoformat(),
+            "last_active": datetime.now().isoformat(),
+            "messages": []
+        }
+    def reset_session(self):
+        if os.path.exists(HISTORY_FILE):
+            os.remove(HISTORY_FILE)
+        return self._new_session()
